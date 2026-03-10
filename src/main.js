@@ -1,21 +1,18 @@
 import { createElement, render } from ".";
 
-const element = createElement(
-  "h1",
-  {
-    id: "title",
-    style: "background: orange",
-  },
-  "Hello World",
-  createElement(
-    "a",
-    { href: "https://bilibili.com", style: "color: yellow" },
-    "Bilibili",
-  ),
-);
+const handleInput = (e) => {
+  renderer(e.target.value);
+};
 
-const container = document.querySelector("#root");
+const renderer = (value) => {
+  const container = document.querySelector("#root");
+  const element = createElement(
+    "div",
+    null,
+    createElement("input", { oninput: (e) => handleInput(e) }, null),
+    createElement("h1", null, value),
+  );
+  render(element, container);
+};
 
-render(element, container);
-
-console.log(element);
+renderer();
