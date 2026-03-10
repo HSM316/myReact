@@ -15,7 +15,7 @@ function createDOM(fiber) {
 
 //发出第一个fiber, root fiber
 function render(element, container) {
-  nextUnitofWork = {
+  wipRoot = {
     dom: container,
     props: {
       children: [element],
@@ -24,8 +24,28 @@ function render(element, container) {
     child: null,
     parent: null,
   };
+
+  nextUnitofWork = wipRoot;
 }
+
 let nextUnitofWork = null;
+let wipRoot = null;
+
+//commit阶段
+function commitRoot() {
+  commitWork(wipRoot.child);
+  wipRoot = null;
+}
+
+function commitWork(fiber) {
+  if (!fiber) {
+    return;
+  }
+  const parentDOM = fiber.parent.dom;
+  parentDOM.append(fiber.dom);
+  commitWork(fiber.child);
+  commitWork(fiber.sibling);
+}
 
 // 调度函数
 function workLoop(deadline) {
@@ -41,6 +61,11 @@ function workLoop(deadline) {
 
   // 没有足够的时间，请求下一次浏览器空闲的时候执行
   requestIdleCallback(workLoop);
+
+  //commit阶段
+  if (!nextUnitofWork && wipRoot) {
+    commitRoot();
+  }
 }
 
 // 第一次请求
@@ -50,11 +75,6 @@ function performUnitOfWork(fiber) {
   //创建DOM元素
   if (!fiber.dom) {
     fiber.dom = createDOM(fiber);
-  }
-
-  //追加到父节点
-  if (fiber.parent) {
-    fiber.parent.dom.append(fiber.dom);
   }
 
   //给children新建fiber
