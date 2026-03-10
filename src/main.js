@@ -1,8 +1,11 @@
 import { createElement, render } from ".";
+import { useState } from "./render";
 
-const App = (props) => {
-  return createElement("h1", null, "Hi", props.name);
+const Counter = () => {
+  const [state, setState] = useState(0);
+  return createElement("h1", { onclick: () => setState((c) => c + 1) }, state);
 };
+
 const container = document.querySelector("#root");
-const element = createElement(App, { name: "hsm" });
+const element = createElement(Counter);
 render(element, container);

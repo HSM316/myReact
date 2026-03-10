@@ -74,9 +74,24 @@ function commitDeletion(fiber, domParent) {
 }
 
 function updateDOM(dom, prevProps, nextProps) {
+  const isEvent = (key) => key.startsWith("on");
+  //删除已经没有的props
+  Object.keys(prevProps)
+    .filter((key) => key !== "children" && !isEvent(key))
+    .filter((key) => !(key in nextProps))
+    .forEach((key) => (dom[key] = ""));
+
+  //赋予新的或者改变的props
+  Object.keys(nextProps)
+    .filter((key) => key !== "children" && !isEvent(key))
+    .filter((key) => !(key in prevProps) || prevProps[key] !== nextProps[key])
+    .forEach((key) => {
+      dom[key] = nextProps[key];
+    });
+
   //删除已经没有的或者发生变化的事件处理函数
   Object.keys(prevProps)
-    .filter((key) => key.startsWith("on"))
+    .filter(isEvent)
     .filter((key) => !(key in nextProps) || prevProps[key] !== nextProps[key])
     .forEach((key) => {
       const eventType = key.toLowerCase().substring(2);
@@ -85,25 +100,11 @@ function updateDOM(dom, prevProps, nextProps) {
 
   //添加事件处理函数
   Object.keys(nextProps)
-    .filter((key) => key.startsWith("on"))
+    .filter(isEvent)
     .filter((key) => prevProps[key] !== nextProps[key])
     .forEach((key) => {
       const eventType = key.toLowerCase().substring(2);
       dom.addEventListener(eventType, nextProps[key]);
-    });
-
-  //删除已经没有的props
-  Object.keys(prevProps)
-    .filter((key) => key !== "children")
-    .filter((key) => !(key in nextProps))
-    .forEach((key) => (dom[key] = ""));
-
-  //赋予新的或者改变的props
-  Object.keys(nextProps)
-    .filter((key) => key !== "children")
-    .filter((key) => !(key in prevProps) || prevProps[key] !== nextProps[key])
-    .forEach((key) => {
-      dom[key] = nextProps[key];
     });
 }
 
@@ -164,10 +165,51 @@ function updateHostComponent(fiber) {
   reconcileChildren(fiber, elements);
 }
 
+//记住上一次的fiber
+let wipFiber = null;
+let hookIndex = null;
+
 //处理函数式组件
 function updateFunctionComponent(fiber) {
+  wipFiber = fiber;
+  hookIndex = 0;
+  wipFiber.hooks = [];
+
   const children = [fiber.type(fiber.props)];
   reconcileChildren(fiber, children);
+}
+
+export function useState(initial) {
+  const oldHook =
+    wipFiber.alternate &&
+    wipFiber.alternate.hooks &&
+    wipFiber.alternate.hooks[hookIndex];
+
+  const hook = {
+    state: oldHook ? oldHook.state : initial,
+    queue: [],
+  };
+
+  const actions = oldHook ? oldHook.queue : [];
+  actions.forEach((action) => {
+    hook.state = action(hook.state);
+  });
+
+  const setState = (action) => {
+    hook.queue.push(action);
+    wipRoot = {
+      dom: currentRoot.dom,
+      props: currentRoot.props,
+      alternate: currentRoot,
+    };
+
+    nextUnitofWork = wipRoot;
+    deletions = [];
+  };
+
+  wipFiber.hooks.push(hook);
+  hookIndex += 1;
+  return [hook.state, setState];
 }
 
 function reconcileChildren(wipFiber, elements) {
