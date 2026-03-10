@@ -1,19 +1,11 @@
-function createDOM(fiber) {
-  //创建元素
-  const dom =
-    fiber.type === "TEXT_ELEMENT"
-      ? document.createTextNode("")
-      : document.createElement(fiber.type);
+let nextUnitofWork = null;
+let wipRoot = null;
+let currentRoot = null;
+let deletions = null;
 
-  //赋予属性
-  Object.keys(fiber.props)
-    .filter((key) => key !== "children")
-    .forEach((key) => (dom[key] = fiber.props[key]));
-
-  return dom;
-}
-
-//发出第一个fiber, root fiber
+// =========================
+// 入口：发起一次渲染（创建 root fiber）
+// =========================
 function render(element, container) {
   wipRoot = {
     dom: container,
@@ -30,118 +22,21 @@ function render(element, container) {
   nextUnitofWork = wipRoot;
 }
 
-let nextUnitofWork = null;
-let wipRoot = null;
-let currentRoot = null;
-let deletions = null;
-
-//commit阶段
-function commitRoot() {
-  deletions.forEach(commitWork);
-  commitWork(wipRoot.child);
-  currentRoot = wipRoot;
-  wipRoot = null;
-  commitEffects(currentRoot.child);
-}
-
-function commitWork(fiber) {
-  if (!fiber) {
-    return;
-  }
-
-  let domParentFiber = fiber.parent;
-  while (!domParentFiber.dom) {
-    domParentFiber = domParentFiber.parent;
-  }
-  const parentDOM = domParentFiber.dom;
-
-  if (fiber.effectTag === "PLACEMENT" && fiber.dom) {
-    parentDOM.append(fiber.dom);
-  } else if (fiber.effectTag === "DELETION" && fiber.dom) {
-    commitDeletion(fiber, parentDOM);
-  } else if (fiber.effectTag === "UPDATE" && fiber.dom) {
-    updateDOM(fiber.dom, fiber.alternate.props, fiber.props);
-  }
-  commitWork(fiber.child);
-  commitWork(fiber.sibling);
-}
-
-function commitEffects(fiber) {
-  if (!fiber) return;
-
-  const isFunctionComponent = fiber.type instanceof Function;
-  if (isFunctionComponent && fiber.hooks) {
-    fiber.hooks.forEach((hook) => {
-      if (hook && hook.tag === "effect" && hook.hasChanged) {
-        if (typeof hook.cleanup === "function") {
-          hook.cleanup();
-        }
-        const cleanup = hook.effect();
-        hook.cleanup = typeof cleanup === "function" ? cleanup : undefined;
-      }
-    });
-  }
-
-  commitEffects(fiber.child);
-  commitEffects(fiber.sibling);
-}
-
-function commitDeletion(fiber, domParent) {
-  if (fiber.dom) {
-    domParent.removeChild(fiber.dom);
-  } else {
-    commitDeletion(fiber.child, domParent);
-  }
-}
-
-function updateDOM(dom, prevProps, nextProps) {
-  const isEvent = (key) => key.startsWith("on");
-  //删除已经没有的props
-  Object.keys(prevProps)
-    .filter((key) => key !== "children" && !isEvent(key))
-    .filter((key) => !(key in nextProps))
-    .forEach((key) => (dom[key] = ""));
-
-  //赋予新的或者改变的props
-  Object.keys(nextProps)
-    .filter((key) => key !== "children" && !isEvent(key))
-    .filter((key) => !(key in prevProps) || prevProps[key] !== nextProps[key])
-    .forEach((key) => {
-      dom[key] = nextProps[key];
-    });
-
-  //删除已经没有的或者发生变化的事件处理函数
-  Object.keys(prevProps)
-    .filter(isEvent)
-    .filter((key) => !(key in nextProps) || prevProps[key] !== nextProps[key])
-    .forEach((key) => {
-      const eventType = key.toLowerCase().substring(2);
-      dom.removeEventListener(eventType, prevProps[key]);
-    });
-
-  //添加事件处理函数
-  Object.keys(nextProps)
-    .filter(isEvent)
-    .filter((key) => prevProps[key] !== nextProps[key])
-    .forEach((key) => {
-      const eventType = key.toLowerCase().substring(2);
-      dom.addEventListener(eventType, nextProps[key]);
-    });
-}
-
-// 调度函数
+// =========================
+// 调度：浏览器空闲时分片执行（可中断）
+// =========================
 function workLoop(deadline) {
-  // 应该退出
+  //应该退出
   let shouldYield = false;
-  // 有工作且不应该退出
+  //有工作且不应该退出
   while (nextUnitofWork && !shouldYield) {
-    // 做工作
+    //做工作
     nextUnitofWork = performUnitOfWork(nextUnitofWork);
-    // 看看还有没有足够的时间
+    //看看还有没有足够的时间
     shouldYield = deadline.timeRemaining() < 1;
   }
 
-  // 没有足够的时间，请求下一次浏览器空闲的时候执行
+  //没有足够的时间，请求下一次浏览器空闲的时候执行
   requestIdleCallback(workLoop);
 
   //commit阶段
@@ -150,9 +45,12 @@ function workLoop(deadline) {
   }
 }
 
-// 第一次请求
+//第一次请求
 requestIdleCallback(workLoop);
 
+// =========================
+// 构建：以 Fiber 为单位递进
+// =========================
 function performUnitOfWork(fiber) {
   const isFunctionComponent = fiber.type instanceof Function;
   if (isFunctionComponent) {
@@ -174,7 +72,7 @@ function performUnitOfWork(fiber) {
   }
 }
 
-//处理非函数式组件
+// 处理非函数式组件
 function updateHostComponent(fiber) {
   //创建DOM元素
   if (!fiber.dom) {
@@ -186,11 +84,10 @@ function updateHostComponent(fiber) {
   reconcileChildren(fiber, elements);
 }
 
-//记住上一次的fiber
 let wipFiber = null;
 let hookIndex = null;
 
-//处理函数式组件
+// 处理函数式组件（并驱动 Hooks 记录顺序）
 function updateFunctionComponent(fiber) {
   wipFiber = fiber;
   hookIndex = 0;
@@ -200,6 +97,9 @@ function updateFunctionComponent(fiber) {
   reconcileChildren(fiber, children);
 }
 
+// =========================
+// Hooks：在函数组件渲染期间收集
+// =========================
 export function useState(initial) {
   const oldHook =
     wipFiber.alternate &&
@@ -258,6 +158,9 @@ export function useEffect(effect, deps) {
   hookIndex += 1;
 }
 
+// =========================
+// 协调：对比新旧 children，生成 effectTag
+// =========================
 function reconcileChildren(wipFiber, elements) {
   let index = 0;
   let oldFiber = wipFiber.alternate && wipFiber.alternate.child;
@@ -311,6 +214,123 @@ function reconcileChildren(wipFiber, elements) {
     }
     index += 1;
   }
+}
+
+// =========================
+// 提交：把 effectTag 变成真实 DOM 操作
+// =========================
+function commitRoot() {
+  deletions.forEach(commitWork);
+  commitWork(wipRoot.child);
+  currentRoot = wipRoot;
+  wipRoot = null;
+  commitEffects(currentRoot.child);
+}
+
+function commitWork(fiber) {
+  if (!fiber) {
+    return;
+  }
+
+  let domParentFiber = fiber.parent;
+  while (!domParentFiber.dom) {
+    domParentFiber = domParentFiber.parent;
+  }
+  const parentDOM = domParentFiber.dom;
+
+  if (fiber.effectTag === "PLACEMENT" && fiber.dom) {
+    parentDOM.append(fiber.dom);
+  } else if (fiber.effectTag === "DELETION" && fiber.dom) {
+    commitDeletion(fiber, parentDOM);
+  } else if (fiber.effectTag === "UPDATE" && fiber.dom) {
+    updateDOM(fiber.dom, fiber.alternate.props, fiber.props);
+  }
+  commitWork(fiber.child);
+  commitWork(fiber.sibling);
+}
+
+function commitDeletion(fiber, domParent) {
+  if (fiber.dom) {
+    domParent.removeChild(fiber.dom);
+  } else {
+    commitDeletion(fiber.child, domParent);
+  }
+}
+
+// =========================
+// 副作用：commit 完成后执行 useEffect（含 cleanup）
+// =========================
+function commitEffects(fiber) {
+  if (!fiber) return;
+
+  const isFunctionComponent = fiber.type instanceof Function;
+  if (isFunctionComponent && fiber.hooks) {
+    fiber.hooks.forEach((hook) => {
+      if (hook && hook.tag === "effect" && hook.hasChanged) {
+        if (typeof hook.cleanup === "function") {
+          hook.cleanup();
+        }
+        const cleanup = hook.effect();
+        hook.cleanup = typeof cleanup === "function" ? cleanup : undefined;
+      }
+    });
+  }
+
+  commitEffects(fiber.child);
+  commitEffects(fiber.sibling);
+}
+
+// =========================
+// DOM：创建与属性/事件更新
+// =========================
+function createDOM(fiber) {
+  //创建元素
+  const dom =
+    fiber.type === "TEXT_ELEMENT"
+      ? document.createTextNode("")
+      : document.createElement(fiber.type);
+
+  //赋予属性
+  Object.keys(fiber.props)
+    .filter((key) => key !== "children")
+    .forEach((key) => (dom[key] = fiber.props[key]));
+
+  return dom;
+}
+
+function updateDOM(dom, prevProps, nextProps) {
+  const isEvent = (key) => key.startsWith("on");
+  //删除已经没有的props
+  Object.keys(prevProps)
+    .filter((key) => key !== "children" && !isEvent(key))
+    .filter((key) => !(key in nextProps))
+    .forEach((key) => (dom[key] = ""));
+
+  //赋予新的或者改变的props
+  Object.keys(nextProps)
+    .filter((key) => key !== "children" && !isEvent(key))
+    .filter((key) => !(key in prevProps) || prevProps[key] !== nextProps[key])
+    .forEach((key) => {
+      dom[key] = nextProps[key];
+    });
+
+  //删除已经没有的或者发生变化的事件处理函数
+  Object.keys(prevProps)
+    .filter(isEvent)
+    .filter((key) => !(key in nextProps) || prevProps[key] !== nextProps[key])
+    .forEach((key) => {
+      const eventType = key.toLowerCase().substring(2);
+      dom.removeEventListener(eventType, prevProps[key]);
+    });
+
+  //添加事件处理函数
+  Object.keys(nextProps)
+    .filter(isEvent)
+    .filter((key) => prevProps[key] !== nextProps[key])
+    .forEach((key) => {
+      const eventType = key.toLowerCase().substring(2);
+      dom.addEventListener(eventType, nextProps[key]);
+    });
 }
 
 export default render;
